@@ -1,0 +1,253 @@
+; this is the screen eating snake game...
+;
+; this game pushes the emulator to its limits,
+; and even with maximum speed it still runs slowly.
+; to enjoy this game it's recommended to run it on real
+; computer, however the emulator can be useful to debug
+; tiny games and other similar programs such as this before
+; they become bug-free and workable.
+;
+; you can control the snake using arrow keys on your keyboard.
+;
+; all other keys will stop the snake.
+;
+; press esc to exit.
+
+
+name "snake"
+
+org     100h
+
+jmp     start ; nhảy qua start bỏ qua phần data
+
+; ------ data section ------
+
+s_size  equ     7 ; chọn kích thước cho con rắn
+snake dw s_size dup(0)
+
+tail    dw      ? ; khởi tạo đuôi rỗng
+
+; direction constants
+;          (bios key codes):
+left    equ     4bh; dữ liệu di chuyển trái
+right   equ     4dh;  dữ liệu di chuyển phải 
+up      equ     48h; dữ liệu di chuyển lên 
+down    equ     50h;dữ liệu di chuyển xuống 
+
+; current snake direction:
+cur_dir db      right; đặt cho hướng rắn hiện tại ( lúc bắt đầu là sang phải)
+
+wait_time dw    0; đặt thời gian đợi là 0
+
+; welcome message
+msg     db "==== how to play ====", 0dh,0ah
+db "this game was debugged on emu8086", 0dh,0ah
+db "but it is not designed to run on the emulator", 0dh,0ah
+db "because it requires relatively fast video card and cpu.", 0dh,0ah, 0ah
+
+db "if you want to see how this game really works,", 0dh,0ah
+db "run it on a real computer (click external->run from the menu).", 0dh,0ah, 0ah
+
+db "you can control the snake using arrow keys", 0dh,0ah
+db "all other keys will stop the snake.", 0dh,0ah, 0ah
+
+db "press esc to exit.", 0dh,0ah
+db "====================", 0dh,0ah, 0ah
+db "press any key to start...$"
+
+; ------ code section ------
+
+start:
+
+; print welcome message:
+mov dx, offset msg; chuyển địa chỉ của phần msg vào thanh ghi dx
+mov ah, 9; chuyển 9 vào thanh ghi ah
+int 21h; hàm ngắt 21 khi ah=9 để in ra màn hình dữ liệu của thanh ghi dx 
+
+
+; wait for any key:
+mov ah, 00h ; gán ah=00h
+int 16h ; sử dụng hàm ngắt 16 khi ah=00h để đợi nhập bắt kì từ bàn phím
+
+
+; hide text cursor:
+mov     ah, 1; chuyển ah=1
+mov     ch, 2bh; gán ch=2b
+mov     cl, 0bh; gán cl=0b
+int     10h;đặt con trỏ ở chế độ văn bản trong vùng ch-cl
+
+
+game_loop:
+
+; === select first video page
+mov     al, 0  ; chuyển al=0
+mov     ah, 05h; chuyển ah=05h 
+int     10h; chọn trang hiển thị hoạt động
+
+; === show new head:
+mov     dx, snake[0]; chuyển địa ở snake[0] vào thanh dx
+
+; đưa con trỏ về vị trí dl-dh 
+mov     ah, 02h; gán ah=02h
+int     10h; hàm ngắt đặt vị trí con trỏ
+
+; print '*' at the location:
+mov     al, '*'; gán al =*
+mov     ah, 09h; gán ah =09h
+mov     bl, 0eh ; chọn màu
+mov     cx, 1   ; chọn số kí tự cần in ra
+int     10h ; hàm ngắn 10h khi ah =09h để in ra kí tự tại vị trí của con trỏ
+
+; === keep the tail:
+mov     ax, snake[s_size * 2 - 2]; chuyển vào ax dữ liệu của ô snake[s_size * 2 - 2]
+mov     tail, ax; chuyển dữ liệu thanh ax vào tail
+
+call    move_snake; gọi đến hàm con move_snake
+
+
+; === hide old tail:
+mov     dx, tail ; chuyển dữ liệu đầu của tail vào thanh dx
+
+; set cursor at dl,dh
+mov     ah, 02h; gán ah=02h
+int     10h; đặt vị trí con trỏ đến vị trí dl - dh
+
+; print ' ' at the location:
+mov     al, ' '; gán al=' '
+mov     ah, 09h; gán ah=09h
+mov     bl, 0eh ; chọn màu
+mov     cx, 1   ; chọn số kí tự
+int     10h; hàm ngắn 10h khi ah =09h để in ra kí tự tại vị trí của con trỏ
+
+
+
+check_for_key:
+
+; === check for player commands:
+mov     ah, 01h						; chuyển ah <- 1
+int     16h							; hàm ngắt 16h của bios: ah=1 -> đọc phím được lưu ở bộ nhớ tạm đã được ấn trước đó
+jz      no_key						; nếu không có phím nhận được (Zero Flag = 1) nhảy sang dòng 145
+
+mov     ah, 00h						; chuyển ah<-0
+int     16h							; hàm ngắt 16h của bios: ah=0 -> đọc phím được ấn, giá trị ascii được lưu ở al
+
+cmp     al, 1bh                     ; esc - key?		; kiểm tra xem phím vừa ấn có phải nút escape?
+je      stop_game                   ;				; nếu bằng (đúng) nhảy sang dòng 166
+
+mov     cur_dir, ah					; nếu không bằng, lưu giá trị của nút và biến chỉ hướng cur_dir
+
+no_key:
+
+
+
+; === wait a few moments here:
+; get number of clock ticks
+; (about 18 per second)
+; since midnight into cx:dx
+mov     ah, 00h						; chuyển ah<-0
+int     1ah							; hàm ngắt 1ah: ah=0 -> đọc thời gian của hệ thống, trả về giá trị vào thanh ghi dx (phần giây)
+cmp     dx, wait_time				; so sánh giá trị dx và biến wait_time
+jb      check_for_key				; nếu dx nhỏ hơn, nhảy sang dòng 130 tiếp tục chờ phím ở bộ nhớ tạm
+add     dx, 4						; nếu dx > wait_time: dx<-dx+4
+mov     wait_time, dx				; wait_time<-dx, tăng thời gian chờ phím tiếp theo trên thời gian thực
+
+
+
+; === eternal game loop:
+jmp     game_loop					; nhảy về dòng 86
+
+
+stop_game:							; hàm dừng trò chơi
+
+                                    ; hiện lại con trỏ của máy tính
+mov     ah, 1						; ah<-1
+mov     ch, 0bh						; ch<-11=00001011(2) bit 5-6 = 0-0 -> hiển thị con trỏ, bit 0-4: vị trí dòng bắt đầu của con trỏ
+mov     cl, 0bh						; cl<-11=00001011(2) bit 0-4: vị trí dòng kết thúc của con trỏ
+int     10h							; hàm ngắt 10h của bios: ah=1 -> cài đặt và hiển thị thuộc tính con trỏ
+
+ret									; dừng toàn bộ chương trình
+
+; ------ functions section ------
+
+; this procedure creates the
+; animation by moving all snake
+; body parts one step to tail,
+; the old tail goes away:
+; [last part (tail)]-> goes away
+; [part i] -> [part i+1]
+; ....
+
+move_snake proc near				; hàm di chuyển rắn
+
+                                    ; set es to bios info segment:  
+mov     ax, 40h						;ax<-40h
+mov     es, ax						;es<-ax, khởi tạo thanh ghi es
+
+                                    ; trỏ di tới đuôi con rắn
+  mov   di, s_size * 2 - 2			;chuyển di <- phần đuôi của rắn
+                                    ; move all body parts
+                                    ; (last one simply goes away)
+  mov   cx, s_size-1				;đưa độ dài trừ phần đuôi (6) vào thanh ghi cx, cx<-6
+move_array:							;liên tục dịch các phần thân của rắn a[i]=a[i+1], a[i+1]=a[i-2]..., riêng đuôi bỏ đi
+  mov   ax, snake[di-2]				
+  mov   snake[di], ax				;mảng snake đưa vào 6 phần tử
+  sub   di, 2						
+  loop  move_array
+
+
+cmp     cur_dir, left				; kiếm tra giá trị của biến cur_dir
+  je    move_left					; nếu bằng giá trị mũi lên của bàn phím thì dịch rắn sang trái
+cmp     cur_dir, right
+  je    move_right					; tương tự dịch phải, nhảy sang line 227
+cmp     cur_dir, up
+  je    move_up						; dịch lên trên, line 236
+cmp     cur_dir, down
+  je    move_down					; dịch xuống dưới, line 246
+
+jmp     stop_move                   ; ghi nhận được phím không phải phím mũi tên, nhảy line 255
+
+
+move_left:
+                                    ; snake được khai báo ở dạng word, để chuyển giá trị vào al (8bit) dùng 'b.' overload byte snake để truyền, khi đó [0] là low-byte & [1] là high-byte, tương tự với các lệnh di chuyển khác
+  mov   al, b.snake[0]   			;chuyển địa chỉ đầu rắn so với cạnh trái vào al		
+  dec   al							;al <- al-1
+  mov   b.snake[0], al				;snake[0] <- al
+  cmp   al, -1						;kiểm tra al ? -1: rắn chạm qua đỉnh trái cùng của màn hình
+  jne   stop_move       			;nếu không bằng nhảy line 226
+  mov   al, es:[4ah]    			;đưa giá trị số cột từ thanh ghi es:[4ah] vào thanh ghi al 
+  dec   al							;al <- al-1: đưa al về vị trí cùng hàng, cột bên phải cùng
+  mov   b.snake[0], al  			;chuyển al vào địa chỉ của đầu rắn, cho rắn dịch trái từ bên phải cột cuối cùng dòng
+  jmp   stop_move					;nhảy sang dòng 256
+
+move_right:
+  mov   al, b.snake[0]				;tương tự như dịch trái
+  inc   al							;al <= al + 1
+  mov   b.snake[0], al				;snake[0] <- al
+  cmp   al, es:[4ah]    			;kiểm tra xem liệu đầu rắn có đi qua địa chỉ cột cuối cùng dòng 
+  jb    stop_move					;kết quả so sánh (nhỏ hơn) -> rắn đi tiếp sang phải, nhảy line 256
+  mov   b.snake[0], 0   			;kết quả so sánh đúng (>=), đưa đầu rắn sang cột đầu cùng dòng
+  jmp   stop_move					;nhảy line 256
+
+move_up:
+  mov   al, b.snake[1]				;al <- b.snake[1] trỏ vào địa chỉ khoảng cách đầu rắn so với cạnh trên
+  dec   al							;al <- al-1
+  mov   b.snake[1], al				;b.snake[1] <- al
+  cmp   al, -1						;so sanh al với -1: vị trí đầu hiện tại của rắn đang ở sát cạnh trên?
+  jne   stop_move					;nếu không nhảy line 256
+  mov   al, es:[84h]    			;đưa al về cạnh dưới cùng cùng cột
+  mov   b.snake[1], al  			;b.snake[1] <- al, đưa đầu rắn xuống đi lên từ cạnh dưới cùng cột đang lưu tại al
+  jmp   stop_move					;nhảy line 256
+
+move_down:
+  mov   al, b.snake[1]				;tương tự đi lên
+  inc   al
+  mov   b.snake[1], al				
+  cmp   al, es:[84h]    			;kiểm tra rắn có đang ở sát cạnh dưới 
+  jbe   stop_move					;nếu không nhảy line 256
+  mov   b.snake[1], 0   			;nếu có b.snake[1]<- 0, đưa rắn đi xuống từ cạnh trên cùng cột
+  jmp   stop_move					;nhảy line 256
+
+stop_move:							;dừng hàm con
+  ret
+move_snake endp
+
